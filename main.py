@@ -40,21 +40,25 @@ def get_google_sheets_service():
 
 
 def read_from_google_sheet(sheet_id):
+    """ Reads Google Sheets data and returns it as a dictionary. """
     service = get_google_sheets_service()
     sheet = service.spreadsheets()
 
     try:
-        
-        result = (
-            sheet.values()
-            .get(spreadsheetId=sheet_id, range="Sheet1!A1:C")
-            .execute()
-        )
+        result = sheet.values().get(spreadsheetId=sheet_id, range="Sheet1!A1:C").execute()
         values = result.get("values", [])
-        return values
-    except HttpError as e:
-        print(f"An error occurred while reading data from Google Sheet: {e}")
-        return []
+
+        if not values:
+            return {}
+
+        headers = values[0]  # Column headers
+        user_data = {row[0]: dict(zip(headers, row)) for row in values[1:]}  # Convert to dict
+
+        return user_data
+    except Exception as e:
+        print(f"An error occurred while reading data from Google Sheets: {e}")
+        return {}
+
     
 def get_slack_user_id(email):
     try:
@@ -64,44 +68,50 @@ def get_slack_user_id(email):
         print(f"An error occurred while looking up user by email: {e}")
         return None
     
-def send_direct_message(slack_user_id, message):
+def send_notification(slack_user_id, message):
+    """ Sends a Slack message to the user. """
     try:
         response = app.client.chat_postMessage(channel=slack_user_id, text=message)
         return response
     except Exception as e:
-        print(f"An error occurred while sending a direct message: {e}")
+        print(f"An error occurred while sending a message: {e}")
         return None
 
 if __name__ == "__main__":
-    data = read_from_google_sheet(SPREADSHEET_ID)
-    emails, birthdays, join_dates = [], [] , []
-    # mention the user in the message like @user
-    message= f'''Happy Birthday! 🎉🎂🎈, Have a Great Day
-    
-    
-    FROM: Team - Blackbook Properties
-    '''
-    for row in data[1:]:
-        emails.append(row[0])
-        birthdays.append(row[1])
-        join_dates.append(row[2])
-    print("Emails: ", emails)
-    print("Birthdays: ", birthdays)
-    print("Join Dates: ", join_dates)
-    for email in emails:
-        slack_user_id = get_slack_user_id(email)
-        print(f"Email: {email} => Slack User ID: {slack_user_id}")
-        time.sleep(1)
-        if slack_user_id:
-            try:
-                response = send_direct_message(slack_user_id, message)
-                print(f"Message sent to {email} with Slack User ID {slack_user_id}: {response}")
-            except Exception as e:
-                print(f"An error occurred while sending a direct message: {e}")
-        else:
-            print(f"Could not find Slack User ID for {email}")
-            
+    users = read_from_google_sheet(SPREADSHEET_ID)
+    today = datetime.today().strftime("%#m/%#d")  # Windows format
+    print(f"Today's Date: {today}")
 
+    for email, details in users.items():
+        slack_user_id = get_slack_user_id(email)
+        if not slack_user_id:
+            print(f"Could not find Slack User ID for {email}")
+            continue
+
+        birthday = details.get("Birthday", "")
+        join_date = details.get("Join Date", "")
+
+        birthday_mm_dd = "/".join(str(int(x)) for x in birthday.split("/")[:2]) if birthday else None
+        join_mm_dd = "/".join(str(int(x)) for x in join_date.split("/")[:2]) if join_date else None
+
+        print(f"Checking for {email} - Birthday: {birthday_mm_dd}, Join Date: {join_mm_dd}")
+
+        if join_date:
+            join_year = int(join_date.split("/")[-1])
+            years_completed = datetime.today().year - join_year
+            print(f"Years Completed: {years_completed}")
+
+        if birthday_mm_dd == today:
+            print(f"Sending Birthday Message to {email}")
+            birthday_message = f"Hey <@{slack_user_id}>, Happy Birthday! 🎉🎂🎈 Have a Great Day!\n\nFROM: Team - Blackbook Properties"
+            send_notification("#birthdays-and-anniversaries", birthday_message)
+
+        if join_mm_dd == today:
+            print(f"Sending Anniversary Message to {email}")
+            anniversary_message = f"Hey <@{slack_user_id}>, Congratulations on your {years_completed}th anniversary! 🎉 You have been a great asset, and we are thankful for the work you put in. Hoping for many more successful years with you! 🚀\n\nFROM: Team - Blackbook Properties"
+            send_notification("birthdays-and-anniversaries", anniversary_message)
+
+        time.sleep(1)
 
    
 
